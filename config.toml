@@ -1,0 +1,7 @@
+[server]
+listen_address = "127.0.0.1"
+port = 8080
+
+[storage]
+base = "data"
+ghost_dir = "ghosts"

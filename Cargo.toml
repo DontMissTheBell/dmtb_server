@@ -9,3 +9,15 @@ edition = "2021"
 actix-web = "4"
 actix = "0.13"
 actix-web-actors = "4"
+config = "0.13.3"
+futures = "0.3.26"
+log = "0.4"
+pretty_env_logger = "0.4"
+
+[dependencies.uuid]
+version = "1.3.0"
+features = [
+    "v4",                # Lets you generate random UUIDs
+    "fast-rng",          # Use a faster (but still sufficiently random) RNG
+    "macro-diagnostics", # Enable better diagnostics for compile-time UUIDs
+]
