@@ -3,7 +3,7 @@ use std::io::Write;
 
 use actix::{Actor, StreamHandler};
 use actix_web::{
-    get, post,
+    get, put,
     web::{self, BytesMut},
     App, Error, HttpRequest, HttpResponse, HttpServer, Responder,
 };
@@ -89,7 +89,7 @@ async fn ws_upgrader(req: HttpRequest, stream: web::Payload) -> Result<HttpRespo
 }
 
 // Handles the submission of a ghost binary
-#[post("/api/v1/submit-ghost")]
+#[put("/api/v1/submit-ghost")]
 async fn submit_ghost(req: HttpRequest, mut payload: web::Payload) -> Result<HttpResponse, Error> {
     let mut ghost_data = BytesMut::new();
     // Load the payload into memory
@@ -115,7 +115,7 @@ async fn submit_ghost(req: HttpRequest, mut payload: web::Payload) -> Result<Htt
         )); // Return error if file can't be written to
     }
 
-    Ok(HttpResponse::Ok().body(format!("Successfully saved to {id}!")))
+    Ok(HttpResponse::Ok().body(format!("{id}")))
 }
 
 // Handles the retrieval of a ghost binary
