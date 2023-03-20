@@ -1,5 +1,4 @@
-use std::fs::File;
-use std::io::Write;
+use std::{fs::File, io::Read, io::Write, path::Path};
 
 use actix::{Actor, StreamHandler};
 use actix_web::{
@@ -10,15 +9,37 @@ use actix_web::{
 use actix_web_actors::ws;
 use config::Config;
 use futures::StreamExt;
+use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 // constants
 const MAX_SIZE: usize = 512 * 1024; // max payload size is 512k
 
-/// Define HTTP actor
+// Define HTTP actor
 struct GameWs;
 impl Actor for GameWs {
     type Context = ws::WebsocketContext<Self>;
+}
+
+// Define the leaderboard response object
+#[derive(Serialize)]
+struct LeaderboardSection {
+    entries: Vec<LeaderboardEntry>,
+    page: i32,
+    #[serde(rename = "pageSize")]
+    page_size: i32,
+}
+
+// Define the leaderboard entry object
+#[derive(Deserialize, Serialize)]
+struct LeaderboardEntry {
+    #[serde(rename = "playerId")]
+    player_id: i32,
+    #[serde(rename = "levelId")]
+    level_id: i32,
+    #[serde(rename = "ghostId")]
+    ghost_id: Uuid,
+    time: f32,
 }
 
 #[actix_web::main]
@@ -58,6 +79,7 @@ async fn main() -> std::io::Result<()> {
             .service(web::redirect("/", "https://catpowered.net"))
             .service(submit_ghost)
             .service(get_ghost)
+            .service(get_leaderboard_section)
             .route("/ws/", web::get().to(ws_upgrader))
             .app_data(settings_to_clone.clone())
     })
@@ -104,18 +126,107 @@ async fn submit_ghost(req: HttpRequest, mut payload: web::Payload) -> Result<Htt
     // ghost_data is loaded, now we can save to file
 
     // Get the ghost directory from the config
-    let ghost_dir = get_ghost_dir(&req.app_data::<Config>().unwrap());
+    let config = req.app_data::<Config>().unwrap();
+    let ghost_dir = get_ghost_dir(&config);
+    let data_dir = config.get_string("storage.base").unwrap();
 
     let id = Uuid::new_v4(); // Generate a random UUID
 
     let mut f = File::create(format!("{ghost_dir}/{id}"))?; // Attempt to create the file
     if f.write_all(&ghost_data[..]).is_err() {
         return Err(actix_web::error::ErrorInternalServerError(
-            "couldn't write to file",
+            "couldn't write to ghost file",
         )); // Return error if file can't be written to
     }
 
+    // Get header values
+    let player_id = req
+        .headers()
+        .get("X-Player-Id")
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .parse::<i32>();
+    let level_id = req
+        .headers()
+        .get("X-Level-Id")
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .parse::<i32>();
+    let replay_length = req
+        .headers()
+        .get("X-Replay-Length")
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .parse::<f32>();
+    // Check they are valid integers
+    if player_id.is_err() || level_id.is_err() || replay_length.is_err() {
+        return Err(actix_web::error::ErrorBadRequest("Invalid headers"));
+    }
+    // Save the ghost values to the leaderboard
+    let leaderboard_entry = LeaderboardEntry {
+        player_id: player_id.unwrap(),
+        level_id: level_id.unwrap(),
+        ghost_id: id,
+        time: f32::trunc(replay_length.unwrap() / 25.0 * 100.0) / 100.0,
+    };
+    // Get the current leaderboard from the file leaderboard.json and add the new entry
+    let mut leaderboard = get_leaderboard(&data_dir);
+    leaderboard.push(leaderboard_entry);
+    // Sort the leaderboard by time
+    leaderboard.sort_by(|a, b| a.time.partial_cmp(&b.time).unwrap());
+    // Save the leaderboard back to leaderboard.json
+    let mut f = File::create(format!("{data_dir}/leaderboard.json"))?;
+    if f.write_all(
+        serde_json::to_string_pretty(&leaderboard)
+            .unwrap()
+            .as_bytes(),
+    )
+    .is_err()
+    {
+        return Err(actix_web::error::ErrorInternalServerError(
+            "couldn't write to leaderboard file",
+        ));
+    } // Return error if file can't be written to
+
     Ok(HttpResponse::Ok().body(format!("{id}")))
+}
+
+// Returns leaderboard section as JSON
+#[get("/api/v1/leaderboard/{page}/{page_size}")]
+async fn get_leaderboard_section(
+    req: HttpRequest,
+    params: web::Path<(i32, i32)>,
+) -> impl Responder {
+    let (page, page_size) = params.into_inner();
+
+    let mut leaderboard = get_leaderboard(
+        req.app_data::<Config>()
+            .unwrap()
+            .get_string("storage.base")
+            .unwrap()
+            .as_str(),
+    );
+
+    let leaderboard_section = if leaderboard.len() > ((page) * page_size) as usize {
+        LeaderboardSection {
+            page,
+            page_size,
+            entries: leaderboard
+                .drain((page * page_size) as usize..((page) * page_size) as usize)
+                .collect(),
+        }
+    } else {
+        LeaderboardSection {
+            page,
+            page_size,
+            entries: leaderboard,
+        }
+    };
+
+    HttpResponse::Ok().json(web::Json(leaderboard_section))
 }
 
 // Handles the retrieval of a ghost binary
@@ -145,4 +256,17 @@ fn get_ghost_dir(config: &Config) -> String {
     config.get_string("storage.base").unwrap()
         + "/"
         + &config.get_string("storage.ghost_dir").unwrap()
+}
+
+fn get_leaderboard(data_dir: &str) -> Vec<LeaderboardEntry> {
+    if !Path::new(&format!("{data_dir}/leaderboard.json")).exists() {
+        return Vec::new();
+    }
+    let mut leaderboard_file = File::open(format!("{data_dir}/leaderboard.json")).unwrap();
+    let mut leaderboard_data = String::new();
+    leaderboard_file
+        .read_to_string(&mut leaderboard_data)
+        .unwrap();
+
+    serde_json::from_str(&leaderboard_data).unwrap()
 }
