@@ -221,6 +221,15 @@ async fn get_leaderboard_section(
                 .drain(((page - 1) * page_size) as usize..((page) * page_size) as usize)
                 .collect(),
         }
+    } else if leaderboard.len() - ((page - 1) * page_size) as usize > 0 {
+        LeaderboardSection {
+            page,
+            page_size: leaderboard.len() as i32 - ((page - 1) * page_size),
+            total_pages: (leaderboard.len() as f32 / page_size as f32).ceil() as i32,
+            entries: leaderboard
+                .drain(((page - 1) * page_size) as usize..leaderboard.len())
+                .collect(),
+        }
     } else {
         LeaderboardSection {
             page: 1,
