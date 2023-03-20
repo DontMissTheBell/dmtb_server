@@ -28,6 +28,7 @@ struct LeaderboardSection {
     page: i32,
     #[serde(rename = "pageSize")]
     page_size: i32,
+    total_pages: i32,
 }
 
 // Define the leaderboard entry object
@@ -210,18 +211,20 @@ async fn get_leaderboard_section(
             .as_str(),
     );
 
-    let leaderboard_section = if leaderboard.len() > ((page) * page_size) as usize {
+    let leaderboard_section = if leaderboard.len() > (page * page_size) as usize {
         LeaderboardSection {
             page,
             page_size,
+            total_pages: (leaderboard.len() as f32 / page_size as f32).ceil() as i32,
             entries: leaderboard
-                .drain((page * page_size) as usize..((page) * page_size) as usize)
+                .drain(((page - 1) * page_size) as usize..((page) * page_size) as usize)
                 .collect(),
         }
     } else {
         LeaderboardSection {
-            page,
-            page_size,
+            page: 1,
+            page_size: leaderboard.len() as i32,
+            total_pages: 1,
             entries: leaderboard,
         }
     };
