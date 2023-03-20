@@ -28,6 +28,7 @@ struct LeaderboardSection {
     page: i32,
     #[serde(rename = "pageSize")]
     page_size: i32,
+    #[serde(rename = "totalPages")]
     total_pages: i32,
 }
 
