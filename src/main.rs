@@ -54,6 +54,7 @@ struct LeaderboardEntry {
 #[derive(Deserialize, Serialize)]
 struct PlayerData {
     id: i32,
+    secret: String,
     username: String,
 }
 
@@ -321,6 +322,20 @@ async fn update_username(req: HttpRequest, body: web::Bytes) -> impl Responder {
     }
     let player_id = player_id.unwrap();
 
+    // Get the player secret from the header
+    let player_secret = req
+        .headers()
+        .get("X-Player-Secret")
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .parse::<Uuid>();
+    // Check if the player secret is valid
+    if player_secret.is_err() {
+        return HttpResponse::Unauthorized().body("Invalid player secret");
+    }
+    let player_secret = player_secret.unwrap();
+
     // Get the player data from the file
     let mut all_player_data = read_player_data(req.app_data::<Config>().unwrap())
         .unwrap_or_else(|_| AllPlayerData { players: vec![] });
@@ -335,12 +350,18 @@ async fn update_username(req: HttpRequest, body: web::Bytes) -> impl Responder {
         None => {
             let new_player_data = PlayerData {
                 id: player_id,
+                secret: player_secret.to_string(),
                 username: "".to_owned(),
             };
             all_player_data.players.push(new_player_data);
             all_player_data.players.last_mut().unwrap()
         }
     };
+
+    // Check if the player secret is correct
+    if player_data.secret != player_secret.to_string() {
+        return HttpResponse::Unauthorized().body("Invalid player secret");
+    }
 
     // Get the username from the body
     let username = String::from_utf8(body.to_vec());
