@@ -171,6 +171,13 @@ async fn submit_ghost(req: HttpRequest, mut payload: web::Payload) -> Result<Htt
         .to_str()
         .unwrap()
         .parse::<i32>();
+    let player_secret = req
+        .headers()
+        .get("X-Player-Secret")
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .parse::<Uuid>();
     let level_id = req
         .headers()
         .get("X-Level-Id")
@@ -186,8 +193,21 @@ async fn submit_ghost(req: HttpRequest, mut payload: web::Payload) -> Result<Htt
         .unwrap()
         .parse::<f32>();
     // Check they are valid integers
-    if player_id.is_err() || level_id.is_err() || replay_length.is_err() {
+    if player_id.is_err() || player_secret.is_err() || level_id.is_err() || replay_length.is_err() {
         return Err(actix_web::error::ErrorBadRequest("Invalid headers"));
+    }
+    // Check the player secret is valid
+    let player_data = read_player_data(req.app_data::<Config>().unwrap()).unwrap();
+    if player_data
+        .players
+        .iter()
+        .find(|&p| {
+            &p.id == player_id.as_ref().unwrap()
+                && p.secret == player_secret.as_ref().unwrap().to_string()
+        })
+        .is_none()
+    {
+        return Err(actix_web::error::ErrorUnauthorized("Invalid player secret"));
     }
     // Save the ghost values to the leaderboard
     let leaderboard_entry = LeaderboardEntry {
