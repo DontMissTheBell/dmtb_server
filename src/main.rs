@@ -103,7 +103,7 @@ async fn main() -> std::io::Result<()> {
             .service(submit_ghost)
             .service(get_ghost)
             .service(get_leaderboard_section)
-            .service(update_username)
+            .service(update_account)
             .route("/ws/", web::get().to(ws_upgrader))
             .app_data(settings_to_clone.clone())
     })
@@ -326,8 +326,8 @@ async fn get_ghost(req: HttpRequest, id: web::Path<String>) -> impl Responder {
 }
 
 // Update the username of an existing player, or create the player if it doesn't exist, storing data of all users in one json file
-#[put("/api/v1/update-username")]
-async fn update_username(req: HttpRequest, body: web::Bytes) -> impl Responder {
+#[put("/api/v1/update-account")]
+async fn update_account(req: HttpRequest, body: web::Bytes) -> impl Responder {
     // Get the player id from the header
     let player_id = req
         .headers()
