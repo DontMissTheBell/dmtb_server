@@ -390,7 +390,7 @@ async fn update_username(req: HttpRequest, body: web::Bytes) -> impl Responder {
         return HttpResponse::BadRequest().body("Invalid username");
     }
     // Update the username
-    player_data.username = username.unwrap();
+    player_data.username = username.unwrap().trim().to_string();
 
     // Save the player data back to the file
     let player_data_str = serde_json::to_string_pretty(&all_player_data).unwrap();
