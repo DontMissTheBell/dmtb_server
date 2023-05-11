@@ -193,7 +193,7 @@ async fn submit_ghost(req: HttpRequest, mut payload: web::Payload) -> Result<Htt
         player_id: player_id.unwrap(),
         level_id: level_id.unwrap(),
         ghost_id: id,
-        time: f32::trunc(replay_length.unwrap() / 25.0 * 100.0) / 100.0,
+        time: f32::trunc(replay_length.unwrap() / 50.0 * 100.0) / 100.0,
     };
     // Get the current leaderboard from the file leaderboard.json and add the new entry
     let mut leaderboard = get_leaderboard(&data_dir);
