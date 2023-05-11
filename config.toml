@@ -5,3 +5,4 @@ port = 8080
 [storage]
 base = "data"
 ghost_dir = "ghosts"
+player_filename = "players.json"

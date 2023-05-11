@@ -1,10 +1,16 @@
-use std::{fs::File, io::Read, io::Write, path::Path};
+use std::{
+    fs::{File, OpenOptions},
+    io::Read,
+    io::{BufReader, Write},
+    path::Path,
+};
 
 use actix::{Actor, StreamHandler};
 use actix_web::{
+    error::Error,
     get, put,
     web::{self, BytesMut},
-    App, Error, HttpRequest, HttpResponse, HttpServer, Responder,
+    App, HttpRequest, HttpResponse, HttpServer, Responder,
 };
 use actix_web_actors::ws;
 use config::Config;
@@ -30,6 +36,7 @@ struct LeaderboardSection {
     page_size: i32,
     #[serde(rename = "totalPages")]
     total_pages: i32,
+    usernames: Vec<String>,
 }
 
 // Define the leaderboard entry object
@@ -44,6 +51,17 @@ struct LeaderboardEntry {
     time: f32,
 }
 
+#[derive(Deserialize, Serialize)]
+struct PlayerData {
+    id: i32,
+    username: String,
+}
+
+#[derive(Deserialize, Serialize)]
+struct AllPlayerData {
+    players: Vec<PlayerData>,
+}
+
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
     // Load config
@@ -55,6 +73,8 @@ async fn main() -> std::io::Result<()> {
         .set_default("storage.base", "data")
         .unwrap()
         .set_default("storage.ghost_dir", "ghosts")
+        .unwrap()
+        .set_default("storage.player_filename", "players.json")
         .unwrap()
         .add_source(config::File::with_name("config"))
         .build()
@@ -82,6 +102,7 @@ async fn main() -> std::io::Result<()> {
             .service(submit_ghost)
             .service(get_ghost)
             .service(get_leaderboard_section)
+            .service(update_username)
             .route("/ws/", web::get().to(ws_upgrader))
             .app_data(settings_to_clone.clone())
     })
@@ -212,7 +233,7 @@ async fn get_leaderboard_section(
             .as_str(),
     );
 
-    let leaderboard_section = if leaderboard.len() > (page * page_size) as usize {
+    let mut leaderboard_section = if leaderboard.len() > (page * page_size) as usize {
         LeaderboardSection {
             page,
             page_size,
@@ -220,6 +241,7 @@ async fn get_leaderboard_section(
             entries: leaderboard
                 .drain(((page - 1) * page_size) as usize..((page) * page_size) as usize)
                 .collect(),
+            usernames: Vec::new(),
         }
     } else if leaderboard.len() - ((page - 1) * page_size) as usize > 0 {
         LeaderboardSection {
@@ -229,6 +251,7 @@ async fn get_leaderboard_section(
             entries: leaderboard
                 .drain(((page - 1) * page_size) as usize..leaderboard.len())
                 .collect(),
+            usernames: Vec::new(),
         }
     } else {
         LeaderboardSection {
@@ -236,8 +259,24 @@ async fn get_leaderboard_section(
             page_size: leaderboard.len() as i32,
             total_pages: 1,
             entries: leaderboard,
+            usernames: Vec::new(),
         }
     };
+
+    // Get player names in order using read_player_data
+    let mut player_ids = Vec::new();
+    for entry in &leaderboard_section.entries {
+        player_ids.push(entry.player_id);
+    }
+    let player_data = read_player_data(req.app_data::<Config>().unwrap()).unwrap();
+    for id in player_ids {
+        for player in &player_data.players {
+            if player.id == id {
+                leaderboard_section.usernames.push(player.username.clone());
+                break;
+            }
+        }
+    }
 
     HttpResponse::Ok().json(web::Json(leaderboard_section))
 }
@@ -265,6 +304,74 @@ async fn get_ghost(req: HttpRequest, id: web::Path<String>) -> impl Responder {
     HttpResponse::Ok().body(ghost_data.unwrap())
 }
 
+// Update the username of an existing player, or create the player if it doesn't exist, storing data of all users in one json file
+#[put("/api/v1/update-username")]
+async fn update_username(req: HttpRequest, body: web::Bytes) -> impl Responder {
+    // Get the player id from the header
+    let player_id = req
+        .headers()
+        .get("X-Player-Id")
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .parse::<i32>();
+    // Check if the player id is valid
+    if player_id.is_err() {
+        return HttpResponse::BadRequest().body("Invalid player id");
+    }
+    let player_id = player_id.unwrap();
+
+    // Get the player data from the file
+    let mut all_player_data = read_player_data(req.app_data::<Config>().unwrap())
+        .unwrap_or_else(|_| AllPlayerData { players: vec![] });
+
+    // Find the player with the given id or create a new one if not found
+    let mut player_data = match all_player_data
+        .players
+        .iter_mut()
+        .find(|p| p.id == player_id)
+    {
+        Some(player_data) => player_data,
+        None => {
+            let new_player_data = PlayerData {
+                id: player_id,
+                username: "".to_owned(),
+            };
+            all_player_data.players.push(new_player_data);
+            all_player_data.players.last_mut().unwrap()
+        }
+    };
+
+    // Get the username from the body
+    let username = String::from_utf8(body.to_vec());
+    // Check if the username is valid
+    if username.is_err() {
+        return HttpResponse::BadRequest().body("Invalid username");
+    }
+    // Update the username
+    player_data.username = username.unwrap();
+
+    // Save the player data back to the file
+    let player_data_str = serde_json::to_string_pretty(&all_player_data).unwrap();
+    let mut file = OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .open(get_player_file(req.app_data::<Config>().unwrap()))
+        .unwrap();
+    writeln!(file, "{}", player_data_str).unwrap();
+
+    HttpResponse::Ok().body("Username updated")
+}
+
+// Read the player data from the file
+fn read_player_data(config: &Config) -> std::io::Result<AllPlayerData> {
+    let file = File::open(get_player_file(config))?;
+    let reader = BufReader::new(file);
+    let player_data: AllPlayerData = serde_json::from_reader(reader)?;
+    Ok(player_data)
+}
+
 fn get_ghost_dir(config: &Config) -> String {
     config.get_string("storage.base").unwrap()
         + "/"
@@ -282,4 +389,10 @@ fn get_leaderboard(data_dir: &str) -> Vec<LeaderboardEntry> {
         .unwrap();
 
     serde_json::from_str(&leaderboard_data).unwrap()
+}
+
+fn get_player_file(config: &Config) -> String {
+    config.get_string("storage.base").unwrap()
+        + "/"
+        + &config.get_string("storage.player_filename").unwrap()
 }
